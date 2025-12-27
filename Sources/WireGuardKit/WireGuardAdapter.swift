@@ -55,6 +55,15 @@ public class WireGuardAdapter {
 
     /// Adapter state.
     private var state: State = .stopped
+    
+    /// Timestamp when the adapter was started (for startup grace period).
+    private var startTime: Date?
+    
+    /// Grace period thresholds in milliseconds for ignoring unsatisfied network events.
+    private let gracePeriodThresholds: [TimeInterval] = [0.1, 0.5, 1.0]  // 100ms, 500ms, 1000ms
+    
+    /// Count of unsatisfied events during grace period.
+    private var unsatisfiedEventCount: Int = 0
 
     /// Tunnel device file descriptor.
     private var tunnelFileDescriptor: Int32? {
@@ -199,6 +208,11 @@ public class WireGuardAdapter {
                     settingsGenerator
                 )
                 self.networkMonitor = networkMonitor
+                
+                // Record start time for grace period tracking
+                self.startTime = Date()
+                self.unsatisfiedEventCount = 0
+                
                 completionHandler(nil)
             } catch let error as WireGuardAdapterError {
                 networkMonitor.cancel()
@@ -431,6 +445,30 @@ public class WireGuardAdapter {
                 wgDisableSomeRoamingForBrokenMobileSemantics(handle)
                 wgBumpSockets(handle)
             } else {
+                // Check if we're within the startup grace period
+                if let startTime = self.startTime {
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    let attemptNumber = self.unsatisfiedEventCount + 1
+                    
+                    if attemptNumber <= self.gracePeriodThresholds.count {
+                        let currentThreshold = self.gracePeriodThresholds[self.unsatisfiedEventCount]
+                        
+                        if elapsed < currentThreshold {
+                            self.logHandler(.verbose, "Startup grace period: ignoring unsatisfied event (attempt \(attemptNumber)/\(self.gracePeriodThresholds.count), elapsed: \(Int(elapsed * 1000))ms < \(Int(currentThreshold * 1000))ms threshold)")
+                            self.unsatisfiedEventCount += 1
+                            return
+                        } else if elapsed < self.gracePeriodThresholds.last! {
+                            // Elapsed past current threshold but still within max grace period
+                            self.logHandler(.verbose, "Startup grace period: ignoring unsatisfied event (attempt \(attemptNumber)/\(self.gracePeriodThresholds.count), elapsed: \(Int(elapsed * 1000))ms, within max grace period)")
+                            self.unsatisfiedEventCount += 1
+                            return
+                        }
+                    }
+                    
+                    // Grace period exhausted or max attempts reached
+                    self.logHandler(.verbose, "Startup grace period exhausted after \(self.unsatisfiedEventCount) attempts and \(Int(Date().timeIntervalSince(startTime) * 1000))ms - proceeding with shutdown.")
+                }
+                
                 self.logHandler(.verbose, "Connectivity offline, pausing backend.")
 
                 self.state = .temporaryShutdown(settingsGenerator)
