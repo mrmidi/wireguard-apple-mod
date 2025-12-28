@@ -64,6 +64,11 @@ public class WireGuardAdapter {
     
     /// Count of unsatisfied events during grace period.
     private var unsatisfiedEventCount: Int = 0
+    
+    /// Flag indicating that a WireGuard handshake has successfully completed.
+    /// When true, we ignore "unsatisfied route" events from NWPathMonitor since
+    /// the tunnel is demonstrably working regardless of what the path monitor reports.
+    private var handshakeSucceeded: Bool = false
 
     /// Tunnel device file descriptor.
     private var tunnelFileDescriptor: Int32? {
@@ -212,6 +217,7 @@ public class WireGuardAdapter {
                 // Record start time for grace period tracking
                 self.startTime = Date()
                 self.unsatisfiedEventCount = 0
+                self.handshakeSucceeded = false
                 
                 completionHandler(nil)
             } catch let error as WireGuardAdapterError {
@@ -295,6 +301,18 @@ public class WireGuardAdapter {
                 completionHandler(error)
             } catch {
                 fatalError()
+            }
+        }
+    }
+
+    /// Mark that a WireGuard handshake has successfully completed.
+    /// After calling this, the adapter will ignore "unsatisfied route" events
+    /// from NWPathMonitor, since the tunnel is demonstrably working.
+    public func markHandshakeSucceeded() {
+        workQueue.async {
+            if !self.handshakeSucceeded {
+                self.handshakeSucceeded = true
+                self.logHandler(.verbose, "Handshake marked as succeeded - will ignore future unsatisfied route events")
             }
         }
     }
@@ -445,6 +463,13 @@ public class WireGuardAdapter {
                 wgDisableSomeRoamingForBrokenMobileSemantics(handle)
                 wgBumpSockets(handle)
             } else {
+                // If handshake succeeded, ignore unsatisfied route events entirely
+                // The tunnel is working regardless of what NWPathMonitor reports
+                if self.handshakeSucceeded {
+                    self.logHandler(.verbose, "Ignoring unsatisfied route - handshake already succeeded, tunnel is working")
+                    return
+                }
+                
                 // Check if we're within the startup grace period
                 if let startTime = self.startTime {
                     let elapsed = Date().timeIntervalSince(startTime)
