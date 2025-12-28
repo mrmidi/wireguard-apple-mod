@@ -134,22 +134,9 @@ class PacketTunnelSettingsGenerator {
         ipv4Settings.includedRoutes = ipv4IncludedRoutes
         networkSettings.ipv4Settings = ipv4Settings
 
-        // If we have IPv6 configuration, use it normally
-        // If we DON'T have IPv6 configuration, we need to BLOCK IPv6 to prevent leaks
-        // by routing all IPv6 traffic (::/0) to an excluded route (blackhole)
-        if !ipv6Addresses.isEmpty {
-            let ipv6Settings = NEIPv6Settings(addresses: ipv6Addresses.map { $0.destinationAddress }, networkPrefixLengths: ipv6Addresses.map { $0.destinationNetworkPrefixLength })
-            ipv6Settings.includedRoutes = ipv6IncludedRoutes
-            networkSettings.ipv6Settings = ipv6Settings
-        } else {
-            // No IPv6 configured - block all IPv6 traffic to prevent leaks
-            // Use a link-local address as a dummy for the interface
-            let ipv6Settings = NEIPv6Settings(addresses: ["fe80::1"], networkPrefixLengths: [128])
-            // Route all IPv6 traffic (::/0) to the tunnel (which will drop it since there's no IPv6 support)
-            let blockAllIPv6 = NEIPv6Route(destinationAddress: "::", networkPrefixLength: 0)
-            ipv6Settings.includedRoutes = [blockAllIPv6]
-            networkSettings.ipv6Settings = ipv6Settings
-        }
+        let ipv6Settings = NEIPv6Settings(addresses: ipv6Addresses.map { $0.destinationAddress }, networkPrefixLengths: ipv6Addresses.map { $0.destinationNetworkPrefixLength })
+        ipv6Settings.includedRoutes = ipv6IncludedRoutes
+        networkSettings.ipv6Settings = ipv6Settings
 
         return networkSettings
     }
